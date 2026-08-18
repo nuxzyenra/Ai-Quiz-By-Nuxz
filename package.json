@@ -1,0 +1,10 @@
+{
+  "name": "ai-quiziz-by-nuxz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Quiziz By Nuxz - Website quiz belajar berbasis AI",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  }
+}

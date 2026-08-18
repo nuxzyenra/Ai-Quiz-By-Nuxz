@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Quiziz By Nuxz</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1>AI Quiziz By Nuxz</h1>
+      <p>Buat quiz belajar dengan bantuan AI sesuai materi yang kamu inginkan.</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- HOME VIEW -->
+    <section id="home-view" class="view">
+      <div class="card">
+        <h2>Pengaturan Quiz</h2>
+        <div class="form-group">
+          <label for="materi">Materi / Topik</label>
+          <textarea id="materi" rows="4" placeholder="Contoh: Sistem pengereman mobil"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="instruksi">Instruksi Tambahan</label>
+          <textarea id="instruksi" rows="3" placeholder="Contoh: Fokus pada fungsi komponen dan ciri-ciri kerusakannya."></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="jumlah">Jumlah Soal</label>
+            <select id="jumlah">
+              <option value="5">5 Soal</option>
+              <option value="10" selected>10 Soal</option>
+              <option value="15">15 Soal</option>
+              <option value="20">20 Soal</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="difficulty">Tingkat Kesulitan</label>
+            <select id="difficulty">
+              <option value="Mudah">Mudah</option>
+              <option value="Sedang" selected>Sedang</option>
+              <option value="Sulit">Sulit</option>
+            </select>
+          </div>
+        </div>
+        <button id="btn-mulai" class="btn-primary">Mulai Quiz</button>
+        <div id="error-banner" class="error-banner hidden"></div>
+      </div>
+
+      <div class="card">
+        <h2>Riwayat Quiz</h2>
+        <div id="history-list" class="history-list">
+          <p class="empty-text">Belum ada riwayat.</p>
+        </div>
+        <button id="btn-hapus-riwayat" class="btn-secondary">Hapus Riwayat</button>
+      </div>
+    </section>
+
+    <!-- LOADING VIEW -->
+    <section id="loading-view" class="view hidden">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <h2>AI Quiziz By Nuxz</h2>
+        <p>AI sedang membuat soal...<br />Mohon tunggu.</p>
+      </div>
+    </section>
+
+    <!-- QUIZ VIEW -->
+    <section id="quiz-view" class="view hidden">
+      <div class="card quiz-card">
+        <div class="quiz-header">
+          <div class="quiz-info">
+            <span id="quiz-materi"></span>
+            <span id="quiz-difficulty" class="badge"></span>
+          </div>
+          <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+          <p id="question-number" class="question-number"></p>
+        </div>
+        <h2 id="question-text" class="question-text"></h2>
+        <div id="options-container" class="options-container"></div>
+        <button id="btn-jawab" class="btn-primary" disabled>Jawab</button>
+      </div>
+    </section>
+
+    <!-- RESULT VIEW -->
+    <section id="result-view" class="view hidden">
+      <div class="card result-card">
+        <h2>Quiz Selesai</h2>
+        <div class="score-circle">
+          <span id="score-value">0</span>
+          <span>/ 100</span>
+        </div>
+        <p id="score-message" class="score-message"></p>
+        <div class="score-detail">
+          <span>Benar: <strong id="correct-count">0</strong></span>
+          <span>Salah: <strong id="wrong-count">0</strong></span>
+        </div>
+        <div class="result-actions">
+          <button id="btn-retry" class="btn-primary">Coba Soal Baru</button>
+          <button id="btn-back-settings" class="btn-secondary">Kembali ke Pengaturan</button>
+        </div>
+      </div>
+
+      <div id="pembahasan-container" class="pembahasan-container"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>AI Quiziz By Nuxz</p>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

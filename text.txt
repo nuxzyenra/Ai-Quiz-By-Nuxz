@@ -1,0 +1,170 @@
+// Vercel Serverless Function
+// Endpoint: /api/generate-quiz
+
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { materi, instruksi, difficulty, jumlah, previousQuestions } = req.body || {};
+
+  if (!materi || !difficulty || !jumlah) {
+    return res.status(400).json({ error: 'Materi, tingkat kesulitan, dan jumlah soal wajib diisi.' });
+  }
+
+  const jumlahSoal = parseInt(jumlah, 10);
+  if (isNaN(jumlahSoal) || ![5, 10, 15, 20].includes(jumlahSoal)) {
+    return res.status(400).json({ error: 'Jumlah soal tidak valid.' });
+  }
+
+  const allowedDiff = ['Mudah', 'Sedang', 'Sulit'];
+  if (!allowedDiff.includes(difficulty)) {
+    return res.status(400).json({ error: 'Tingkat kesulitan tidak valid.' });
+  }
+
+  // Limit input length
+  const materiClean = String(materi).slice(0, 5000);
+  const instruksiClean = instruksi ? String(instruksi).slice(0, 5000) : '';
+
+  let previousQuestionsClean = [];
+  if (Array.isArray(previousQuestions)) {
+    previousQuestionsClean = previousQuestions
+      .map(q => String(q))
+      .slice(0, 50);
+  }
+
+  const prompt = `Kamu adalah AI pembuat soal quiz untuk belajar.
+
+Buat quiz berdasarkan materi yang diberikan pengguna.
+
+MATERI:
+${materiClean}
+
+INSTRUKSI TAMBAHAN:
+${instruksiClean || 'Tidak ada instruksi tambahan.'}
+
+TINGKAT KESULITAN:
+${difficulty}
+
+JUMLAH SOAL:
+${jumlahSoal}
+
+${
+  previousQuestionsClean.length
+    ? `HINDARI DUPLIKASI:\nSoal-soal berikut sudah pernah diberikan sebelumnya, jangan ulangi pertanyaan yang sama:\n${previousQuestionsClean
+        .map((q, i) => `${i + 1}. ${q}`)
+        .join('\n')}\n`
+    : ''
+}
+ATURAN:
+
+1. Buat tepat sesuai jumlah soal yang diminta.
+2. Setiap soal harus berupa pilihan ganda.
+3. Setiap soal memiliki tepat 4 pilihan jawaban.
+4. Pilihan harus A, B, C, dan D.
+5. Hanya boleh ada satu jawaban yang benar.
+6. Soal harus benar-benar sesuai dengan materi.
+7. Jangan membuat pertanyaan yang ambigu.
+8. Pilihan jawaban harus masuk akal.
+9. Jangan membuat jawaban benar terlalu mudah ditebak dari panjang atau bentuk kalimat.
+10. Gunakan bahasa Indonesia kecuali user meminta bahasa lain.
+11. Variasikan tipe pertanyaan.
+12. Sesuaikan soal dengan tingkat kesulitan.
+13. Sertakan jawaban benar.
+14. Sertakan pembahasan singkat.
+15. Jangan menambahkan teks apa pun di luar JSON.
+16. Jangan menggunakan markdown code block.
+17. Pastikan JSON valid.
+18. Jangan membuat soal kosong.
+19. Jangan membuat pilihan jawaban kosong.
+20. Pastikan answer hanya berisi A, B, C, atau D.
+
+FORMAT OUTPUT WAJIB:
+
+{
+  "questions": [
+    {
+      "id": 1,
+      "question": "Pertanyaan...",
+      "options": {
+        "A": "Pilihan A",
+        "B": "Pilihan B",
+        "C": "Pilihan C",
+        "D": "Pilihan D"
+      },
+      "answer": "A",
+      "explanation": "Penjelasan..."
+    }
+  ]
+}`;
+
+  const apiUrl = `https://api-faa.my.id/faa/gemini-ai?text=${encodeURIComponent(prompt)}`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    const apiRes = await fetch(apiUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!apiRes.ok) {
+      throw new Error('API Faa tidak merespons dengan baik');
+    }
+
+    const apiData = await apiRes.json();
+    if (!apiData.status || !apiData.result) {
+      throw new Error('API Faa status false atau result kosong');
+    }
+
+    let raw = String(apiData.result);
+
+    // Bersihkan markdown code fence
+    raw = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+    // Ekstrak JSON dari teks
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start === -1 || end === -1) {
+      throw new Error('Tidak ditemukan JSON');
+    }
+
+    const jsonStr = raw.slice(start, end + 1);
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      throw new Error('JSON tidak valid');
+    }
+
+    if (!parsed.questions || !Array.isArray(parsed.questions)) {
+      throw new Error('Format questions tidak valid');
+    }
+
+    const questions = parsed.questions;
+    if (questions.length !== jumlahSoal) {
+      throw new Error(`Jumlah soal tidak sesuai. Diharapkan ${jumlahSoal}, didapat ${questions.length}`);
+    }
+
+    // Validasi setiap soal
+    for (const q of questions) {
+      if (!q || typeof q !== 'object') throw new Error('Soal tidak valid');
+      if (!q.id || !q.question || !q.options || !q.answer || !q.explanation) {
+        throw new Error('Soal tidak lengkap');
+      }
+      const options = q.options;
+      if (!options.A || !options.B || !options.C || !options.D) {
+        throw new Error('Pilihan jawaban tidak lengkap');
+      }
+      if (!['A', 'B', 'C', 'D'].includes(q.answer)) {
+        throw new Error('Jawaban tidak valid');
+      }
+      if (typeof q.explanation !== 'string' || q.explanation.trim() === '') {
+        throw new Error('Pembahasan kosong');
+      }
+    }
+
+    return res.status(200).json({ questions });
+  } catch (error) {
+    console.error('Error generating quiz:', error.message);
+    return res.status(500).json({ error: 'Gagal membuat quiz. Silakan coba lagi.' });
+  }
+};
