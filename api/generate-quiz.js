@@ -1,5 +1,273 @@
+// api/generate-quiz.js
 // Vercel Serverless Function
 // Endpoint: /api/generate-quiz
+
+const AI_PROVIDERS = [
+  { name: 'gemini', call: callGemini },
+  { name: 'claude', call: callClaude },
+  { name: 'blackbox', call: callBlackbox },
+  { name: 'deepseak', call: callDeepseak }
+];
+
+/* ==================== AI PROVIDERS ADAPTERS ==================== */
+
+async function callGemini(prompt) {
+  const url = `https://api-faa.my.id/faa/gemini-ai?text=${encodeURIComponent(prompt)}`;
+  return await fetchAI(url, 'Gemini');
+}
+
+async function callClaude(prompt) {
+  const url = `https://api-faa.my.id/faa/claude-ai?text=${encodeURIComponent(prompt)}`;
+  return await fetchAI(url, 'Claude');
+}
+
+async function callBlackbox(prompt) {
+  const url = `https://api-faa.my.id/faa/blackbox?query=${encodeURIComponent(prompt)}`;
+  return await fetchAI(url, 'Blackbox');
+}
+
+async function callDeepseak(prompt) {
+  const url = `https://api-faa.my.id/faa/deep-ai?text=${encodeURIComponent(prompt)}`;
+  return await fetchAI(url, 'Deepseak');
+}
+
+async function fetchAI(url, providerName) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000); // 30 detik per provider
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`${providerName} HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.status || !data.result) throw new Error(`${providerName} response invalid`);
+    return data.result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/* ==================== NORMALISASI RESPONSE ==================== */
+
+function normalizeAIResponse(raw, providerName) {
+  if (!raw) throw new Error(`${providerName} empty result`);
+  let cleaned = String(raw)
+    .replace(/```json/gi, '')
+    .replace(/```/g, '')
+    .trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error(`${providerName} no JSON found`);
+  const jsonStr = cleaned.slice(start, end + 1);
+  const parsed = JSON.parse(jsonStr);
+  if (!parsed.questions || !Array.isArray(parsed.questions)) {
+    throw new Error(`${providerName} questions not array`);
+  }
+  return parsed.questions;
+}
+
+/* ==================== VALIDASI SOAL ==================== */
+
+function validateQuestion(q) {
+  if (!q || typeof q !== 'object') return false;
+  if (!q.id || !q.question) return false;
+  if (q.type === 'multiple_choice') {
+    if (!q.options || !q.answer) return false;
+    for (const key of ['A', 'B', 'C', 'D']) {
+      if (!q.options[key]) return false;
+      if (!q.optionExplanations || !q.optionExplanations[key]) return false;
+    }
+    if (!['A', 'B', 'C', 'D'].includes(q.answer)) return false;
+    return true;
+  } else if (q.type === 'essay') {
+    if (!q.expectedAnswer || !q.explanation) return false;
+    if (!q.gradingCriteria || !Array.isArray(q.gradingCriteria) || q.gradingCriteria.length === 0) return false;
+    return true;
+  }
+  return false;
+}
+
+/* ==================== ANTI-DUPLIKASI ==================== */
+
+function normalizeText(str) {
+  return String(str)
+    .toLowerCase()
+    .replace(/[?!.,;:'"`]/g, '')   // hapus tanda baca
+    .replace(/\s+/g, ' ')          // spasi berlebih
+    .trim();
+}
+
+function tokenize(str) {
+  return str.split(' ').filter(word => word.length > 0);
+}
+
+function jaccardSimilarity(a, b) {
+  const setA = new Set(tokenize(normalizeText(a)));
+  const setB = new Set(tokenize(normalizeText(b)));
+  if (setA.size === 0 || setB.size === 0) return 0;
+  const intersection = new Set([...setA].filter(x => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  return intersection.size / union.size;
+}
+
+function isDuplicate(questionText, existingQuestionTexts, threshold = 0.7) {
+  const normalizedNew = normalizeText(questionText);
+  if (!normalizedNew) return true;
+  return existingQuestionTexts.some(existing => {
+    const normalizedExisting = normalizeText(existing);
+    if (normalizedNew === normalizedExisting) return true;
+    // Cek substring
+    if (normalizedNew.includes(normalizedExisting) || normalizedExisting.includes(normalizedNew)) return true;
+    // Cek similarity
+    const similarity = jaccardSimilarity(normalizedNew, normalizedExisting);
+    return similarity >= threshold;
+  });
+}
+
+/* ==================== SHUFFLE OPTIONS (MULTIPLE CHOICE) ==================== */
+
+function shuffleOptions(question) {
+  if (question.type !== 'multiple_choice') return question;
+
+  const items = ['A', 'B', 'C', 'D'].map(letter => ({
+    text: question.options[letter],
+    explanation: question.optionExplanations[letter],
+    isCorrect: letter === question.answer
+  }));
+
+  // Fisher-Yates shuffle
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+
+  const newOptions = {};
+  const newExplanations = {};
+  let newAnswer = null;
+
+  const newLetters = ['A', 'B', 'C', 'D'];
+  items.forEach((item, index) => {
+    const newLetter = newLetters[index];
+    newOptions[newLetter] = item.text;
+    newExplanations[newLetter] = item.explanation;
+    if (item.isCorrect) {
+      newAnswer = newLetter;
+    }
+  });
+
+  question.options = newOptions;
+  question.answer = newAnswer;
+  question.optionExplanations = newExplanations;
+
+  return question;
+}
+
+/* ==================== BALANCING A/B/C/D ==================== */
+
+function balanceAnswerDistribution(questions) {
+  const mcqQuestions = questions.filter(q => q.type === 'multiple_choice');
+  if (mcqQuestions.length === 0) return;
+
+  const MAX_ATTEMPTS = 50; // batas aman
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const counts = { A: 0, B: 0, C: 0, D: 0 };
+    mcqQuestions.forEach(q => counts[q.answer]++);
+    const avg = mcqQuestions.length / 4;
+    const threshold = Math.ceil(avg * 1.5); // huruf tidak boleh melebihi 1.5x rata-rata
+
+    const dominant = Object.keys(counts).find(letter => counts[letter] > threshold);
+    if (!dominant) break; // sudah cukup seimbang
+
+    // Cari satu soal dengan jawaban dominant, lalu shuffle ulang
+    const idx = questions.findIndex(q => q.type === 'multiple_choice' && q.answer === dominant);
+    if (idx === -1) break;
+    shuffleOptions(questions[idx]);
+  }
+}
+
+/* ==================== PROMPT BUILDER ==================== */
+
+function buildBatchPrompt(materi, instruksi, difficulty, totalCount, providerName, previousQuestions) {
+  const mcqTarget = Math.round(totalCount * 0.65);
+  const essayTarget = totalCount - mcqTarget;
+
+  const prevList = previousQuestions.length
+    ? `HINDARI DUPLIKASI:\nBerikut daftar pertanyaan yang sudah pernah dibuat (jangan ulangi atau buat yang mirip):\n${previousQuestions
+        .map((q, i) => `${i + 1}. ${q}`)
+        .join('\n')}`
+    : '';
+
+  return `Kamu adalah AI pembuat soal quiz untuk belajar.
+
+MATERI:
+${materi}
+
+INSTRUKSI TAMBAHAN:
+${instruksi || 'Tidak ada instruksi tambahan.'}
+
+TINGKAT KESULITAN:
+${difficulty}
+
+JUMLAH SOAL YANG HARUS DIBUAT:
+- Pilihan Ganda: ${mcqTarget} soal
+- Essay: ${essayTarget} soal
+Total: ${totalCount} soal.
+
+${prevList}
+
+ATURAN:
+1. Buat tepat jumlah yang diminta.
+2. Pilihan ganda: 4 opsi (A,B,C,D), satu jawaban benar.
+3. Setiap opsi harus memiliki "optionExplanations" masing-masing.
+4. Essay harus memiliki "expectedAnswer", "explanation", "gradingCriteria" (array minimal 2 kriteria).
+5. Soal harus sesuai materi dan tingkat kesulitan.
+6. Gunakan bahasa Indonesia (kecuali user meminta lain).
+7. Distractor harus relevan dan menjebak.
+8. Jangan menambahkan teks di luar JSON, jangan gunakan markdown code block.
+9. Pastikan JSON valid.
+
+FORMAT OUTPUT:
+{
+  "questions": [
+    {
+      "id": 1,
+      "type": "multiple_choice",
+      "question": "...",
+      "options": {"A":"...","B":"...","C":"...","D":"..."},
+      "answer": "A",
+      "optionExplanations": {"A":"...","B":"...","C":"...","D":"..."}
+    },
+    {
+      "id": 2,
+      "type": "essay",
+      "question": "...",
+      "expectedAnswer": "...",
+      "explanation": "...",
+      "gradingCriteria": ["...","..."]
+    }
+  ]
+}`;
+}
+
+/* ==================== GENERATE QUESTIONS FROM PROVIDER ==================== */
+
+async function generateQuestionsFromProvider(provider, targetCount, materi, instruksi, difficulty, previousQuestions) {
+  const prompt = buildBatchPrompt(materi, instruksi, difficulty, targetCount, provider.name, previousQuestions);
+  const rawResult = await provider.call(prompt);
+  const questions = normalizeAIResponse(rawResult, provider.name);
+  // Filter valid
+  let valid = questions.filter(q => validateQuestion(q));
+  // Jika lebih dari target, potong
+  if (valid.length > targetCount) {
+    // Shuffle lalu ambil targetCount
+    for (let i = valid.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [valid[i], valid[j]] = [valid[j], valid[i]];
+    }
+    valid = valid.slice(0, targetCount);
+  }
+  return valid;
+}
+
+/* ==================== MAIN HANDLER ==================== */
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -12,9 +280,12 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Materi, tingkat kesulitan, dan jumlah soal wajib diisi.' });
   }
 
-  const jumlahSoal = parseInt(jumlah, 10);
-  if (isNaN(jumlahSoal) || ![5, 10, 15, 20].includes(jumlahSoal)) {
+  const requestedCount = parseInt(jumlah, 10);
+  if (isNaN(requestedCount) || requestedCount < 1) {
     return res.status(400).json({ error: 'Jumlah soal tidak valid.' });
+  }
+  if (requestedCount > 1000) {
+    return res.status(400).json({ error: 'Jumlah soal terlalu besar, maksimal 1000 soal.' });
   }
 
   const allowedDiff = ['Mudah', 'Sedang', 'Sulit'];
@@ -22,149 +293,121 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Tingkat kesulitan tidak valid.' });
   }
 
-  // Limit input length
   const materiClean = String(materi).slice(0, 5000);
   const instruksiClean = instruksi ? String(instruksi).slice(0, 5000) : '';
 
   let previousQuestionsClean = [];
   if (Array.isArray(previousQuestions)) {
-    previousQuestionsClean = previousQuestions
-      .map(q => String(q))
-      .slice(0, 50);
+    previousQuestionsClean = previousQuestions.map(q => String(q)).slice(0, 500);
   }
 
-  const prompt = `Kamu adalah AI pembuat soal quiz untuk belajar.
+  const allQuestions = [];
+  const allQuestionTexts = []; // untuk anti-duplikasi internal
+  const workingProviders = [...AI_PROVIDERS];
 
-Buat quiz berdasarkan materi yang diberikan pengguna.
+  let remaining = requestedCount;
+  let round = 0;
+  const MAX_ROUNDS = 20; // batas putaran untuk mencegah loop tak terbatas
 
-MATERI:
-${materiClean}
+  while (remaining > 0 && workingProviders.length > 0 && round < MAX_ROUNDS) {
+    round++;
 
-INSTRUKSI TAMBAHAN:
-${instruksiClean || 'Tidak ada instruksi tambahan.'}
+    // Distribusi soal ke provider yang masih aktif
+    const base = Math.floor(remaining / workingProviders.length);
+    let remainder = remaining % workingProviders.length;
+    const tasks = workingProviders.map((provider, index) => {
+      const count = base + (index < remainder ? 1 : 0);
+      return { provider, count };
+    });
 
-TINGKAT KESULITAN:
-${difficulty}
+    // Jalankan semua provider secara paralel
+    const taskResults = await Promise.all(
+      tasks.map(async (task) => {
+        if (task.count === 0) return { provider: task.provider.name, questions: [], failed: false };
+        try {
+          const questions = await generateQuestionsFromProvider(
+            task.provider,
+            task.count,
+            materiClean,
+            instruksiClean,
+            difficulty,
+            previousQuestionsClean
+          );
+          return { provider: task.provider.name, questions, failed: false };
+        } catch (error) {
+          console.error(`Provider ${task.provider.name} failed:`, error.message);
+          return { provider: task.provider.name, questions: [], failed: true };
+        }
+      })
+    );
 
-JUMLAH SOAL:
-${jumlahSoal}
+    // Proses hasil
+    const failedProviders = [];
+    let roundSuccess = 0;
 
-${
-  previousQuestionsClean.length
-    ? `HINDARI DUPLIKASI:\nSoal-soal berikut sudah pernah diberikan sebelumnya, jangan ulangi pertanyaan yang sama:\n${previousQuestionsClean
-        .map((q, i) => `${i + 1}. ${q}`)
-        .join('\n')}\n`
-    : ''
-}
-ATURAN:
-
-1. Buat tepat sesuai jumlah soal yang diminta.
-2. Setiap soal harus berupa pilihan ganda.
-3. Setiap soal memiliki tepat 4 pilihan jawaban.
-4. Pilihan harus A, B, C, dan D.
-5. Hanya boleh ada satu jawaban yang benar.
-6. Soal harus benar-benar sesuai dengan materi.
-7. Jangan membuat pertanyaan yang ambigu.
-8. Pilihan jawaban harus masuk akal.
-9. Jangan membuat jawaban benar terlalu mudah ditebak dari panjang atau bentuk kalimat.
-10. Gunakan bahasa Indonesia kecuali user meminta bahasa lain.
-11. Variasikan tipe pertanyaan.
-12. Sesuaikan soal dengan tingkat kesulitan.
-13. Sertakan jawaban benar.
-14. Sertakan pembahasan singkat.
-15. Jangan menambahkan teks apa pun di luar JSON.
-16. Jangan menggunakan markdown code block.
-17. Pastikan JSON valid.
-18. Jangan membuat soal kosong.
-19. Jangan membuat pilihan jawaban kosong.
-20. Pastikan answer hanya berisi A, B, C, atau D.
-
-FORMAT OUTPUT WAJIB:
-
-{
-  "questions": [
-    {
-      "id": 1,
-      "question": "Pertanyaan...",
-      "options": {
-        "A": "Pilihan A",
-        "B": "Pilihan B",
-        "C": "Pilihan C",
-        "D": "Pilihan D"
-      },
-      "answer": "A",
-      "explanation": "Penjelasan..."
-    }
-  ]
-}`;
-
-  const apiUrl = `https://api-faa.my.id/faa/gemini-ai?text=${encodeURIComponent(prompt)}`;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
-    const apiRes = await fetch(apiUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!apiRes.ok) {
-      throw new Error('API Faa tidak merespons dengan baik');
-    }
-
-    const apiData = await apiRes.json();
-    if (!apiData.status || !apiData.result) {
-      throw new Error('API Faa status false atau result kosong');
-    }
-
-    let raw = String(apiData.result);
-
-    // Bersihkan markdown code fence
-    raw = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-
-    // Ekstrak JSON dari teks
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start === -1 || end === -1) {
-      throw new Error('Tidak ditemukan JSON');
-    }
-
-    const jsonStr = raw.slice(start, end + 1);
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonStr);
-    } catch {
-      throw new Error('JSON tidak valid');
-    }
-
-    if (!parsed.questions || !Array.isArray(parsed.questions)) {
-      throw new Error('Format questions tidak valid');
-    }
-
-    const questions = parsed.questions;
-    if (questions.length !== jumlahSoal) {
-      throw new Error(`Jumlah soal tidak sesuai. Diharapkan ${jumlahSoal}, didapat ${questions.length}`);
-    }
-
-    // Validasi setiap soal
-    for (const q of questions) {
-      if (!q || typeof q !== 'object') throw new Error('Soal tidak valid');
-      if (!q.id || !q.question || !q.options || !q.answer || !q.explanation) {
-        throw new Error('Soal tidak lengkap');
+    for (const result of taskResults) {
+      if (result.failed) {
+        failedProviders.push(result.provider);
+        continue;
       }
-      const options = q.options;
-      if (!options.A || !options.B || !options.C || !options.D) {
-        throw new Error('Pilihan jawaban tidak lengkap');
+      const valid = result.questions.filter(q => validateQuestion(q));
+      const unique = [];
+      for (const q of valid) {
+        if (!isDuplicate(q.question, allQuestionTexts) && !isDuplicate(q.question, previousQuestionsClean)) {
+          unique.push(q);
+        }
       }
-      if (!['A', 'B', 'C', 'D'].includes(q.answer)) {
-        throw new Error('Jawaban tidak valid');
+      // Jika lebih dari jatah, potong
+      const targetCountForProvider = tasks.find(t => t.provider.name === result.provider)?.count || 0;
+      let selected = unique;
+      if (selected.length > targetCountForProvider) {
+        // Fisher-Yates shuffle lalu slice
+        for (let i = selected.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [selected[i], selected[j]] = [selected[j], selected[i]];
+        }
+        selected = selected.slice(0, targetCountForProvider);
       }
-      if (typeof q.explanation !== 'string' || q.explanation.trim() === '') {
-        throw new Error('Pembahasan kosong');
+
+      // Tambahkan ke allQuestions
+      for (const q of selected) {
+        q.id = allQuestions.length + 1;
+        allQuestions.push(q);
+        allQuestionTexts.push(q.question);
+        previousQuestionsClean.push(q.question);
       }
+      roundSuccess += selected.length;
     }
 
-    return res.status(200).json({ questions });
-  } catch (error) {
-    console.error('Error generating quiz:', error.message);
+    // Update remaining dan workingProviders
+    remaining = requestedCount - allQuestions.length;
+    // Hapus provider yang gagal dari daftar
+    for (const failedName of failedProviders) {
+      const idx = workingProviders.findIndex(p => p.name === failedName);
+      if (idx !== -1) workingProviders.splice(idx, 1);
+    }
+  }
+
+  if (allQuestions.length !== requestedCount) {
     return res.status(500).json({ error: 'Gagal membuat quiz. Silakan coba lagi.' });
   }
+
+  // Post-processing
+  const finalQuestions = allQuestions.map(q => shuffleOptions(q));
+
+  // Balance A/B/C/D
+  balanceAnswerDistribution(finalQuestions);
+
+  // Acak urutan soal (Fisher-Yates)
+  for (let i = finalQuestions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [finalQuestions[i], finalQuestions[j]] = [finalQuestions[j], finalQuestions[i]];
+  }
+
+  // Reassign ID final
+  finalQuestions.forEach((q, idx) => {
+    q.id = idx + 1;
+  });
+
+  return res.status(200).json({ questions: finalQuestions });
 };
