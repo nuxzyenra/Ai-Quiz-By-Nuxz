@@ -30,12 +30,7 @@
         <div class="form-row">
           <div class="form-group">
             <label for="jumlah">Jumlah Soal</label>
-            <select id="jumlah">
-              <option value="5">5 Soal</option>
-              <option value="10" selected>10 Soal</option>
-              <option value="15">15 Soal</option>
-              <option value="20">20 Soal</option>
-            </select>
+            <input type="number" id="jumlah" min="1" value="10" placeholder="Contoh: 20" />
           </div>
           <div class="form-group">
             <label for="difficulty">Tingkat Kesulitan</label>
@@ -81,9 +76,8 @@
           </div>
           <p id="question-number" class="question-number"></p>
         </div>
-        <h2 id="question-text" class="question-text"></h2>
-        <div id="options-container" class="options-container"></div>
-        <button id="btn-jawab" class="btn-primary" disabled>Jawab</button>
+        <div id="question-container"></div>
+        <div id="feedback-container"></div>
       </div>
     </section>
 

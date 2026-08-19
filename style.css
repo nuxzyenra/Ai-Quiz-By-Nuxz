@@ -113,7 +113,8 @@ main {
 }
 
 .form-group textarea,
-.form-group select {
+.form-group select,
+.form-group input[type="number"] {
   width: 100%;
   padding: 12px 14px;
   border: 2px solid var(--border);
@@ -125,7 +126,8 @@ main {
 }
 
 .form-group textarea:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group input[type="number"]:focus {
   outline: none;
   border-color: var(--primary);
 }
@@ -327,6 +329,7 @@ main {
   line-height: 1.4;
 }
 
+/* Multiple Choice Options */
 .options-container {
   display: flex;
   flex-direction: column;
@@ -364,6 +367,55 @@ main {
   font-weight: 700;
   color: var(--primary);
   min-width: 24px;
+}
+
+/* Essay */
+.essay-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px 14px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+/* Feedback */
+.feedback-container {
+  margin-top: 20px;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f9fafb;
+  border-left: 5px solid var(--border);
+}
+
+.feedback-container.benar {
+  border-left-color: var(--success);
+  background: #ecfdf5;
+}
+
+.feedback-container.salah {
+  border-left-color: var(--danger);
+  background: #fef2f2;
+}
+
+.feedback-status {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.feedback-status.benar-text {
+  color: var(--success);
+}
+
+.feedback-status.salah-text {
+  color: var(--danger);
+}
+
+.option-explanation {
+  margin: 4px 0;
+  font-size: 0.9rem;
 }
 
 /* Result */

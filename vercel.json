@@ -2,6 +2,9 @@
   "functions": {
     "api/generate-quiz.js": {
       "maxDuration": 60
+    },
+    "api/evaluate-answer.js": {
+      "maxDuration": 60
     }
   }
 }
