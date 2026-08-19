@@ -9,6 +9,9 @@ const AI_PROVIDERS = [
   { name: 'deepseak', call: callDeepseak }
 ];
 
+const BATCH_SIZE = 10; // soal per batch, agar respons cepat dan tidak timeout
+const MAX_RETRIES = 1; // retry per provider sebelum pindah
+
 /* ==================== AI PROVIDERS ADAPTERS ==================== */
 
 async function callGemini(prompt) {
@@ -33,7 +36,7 @@ async function callDeepseak(prompt) {
 
 async function fetchAI(url, providerName) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000); // 30 detik per provider
+  const timeout = setTimeout(() => controller.abort(), 30000); // 30 detik per request
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error(`${providerName} HTTP ${res.status}`);
@@ -90,8 +93,8 @@ function validateQuestion(q) {
 function normalizeText(str) {
   return String(str)
     .toLowerCase()
-    .replace(/[?!.,;:'"`]/g, '')   // hapus tanda baca
-    .replace(/\s+/g, ' ')          // spasi berlebih
+    .replace(/[?!.,;:'"`]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -114,9 +117,7 @@ function isDuplicate(questionText, existingQuestionTexts, threshold = 0.7) {
   return existingQuestionTexts.some(existing => {
     const normalizedExisting = normalizeText(existing);
     if (normalizedNew === normalizedExisting) return true;
-    // Cek substring
     if (normalizedNew.includes(normalizedExisting) || normalizedExisting.includes(normalizedNew)) return true;
-    // Cek similarity
     const similarity = jaccardSimilarity(normalizedNew, normalizedExisting);
     return similarity >= threshold;
   });
@@ -133,7 +134,6 @@ function shuffleOptions(question) {
     isCorrect: letter === question.answer
   }));
 
-  // Fisher-Yates shuffle
   for (let i = items.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [items[i], items[j]] = [items[j], items[i]];
@@ -142,41 +142,31 @@ function shuffleOptions(question) {
   const newOptions = {};
   const newExplanations = {};
   let newAnswer = null;
-
   const newLetters = ['A', 'B', 'C', 'D'];
   items.forEach((item, index) => {
     const newLetter = newLetters[index];
     newOptions[newLetter] = item.text;
     newExplanations[newLetter] = item.explanation;
-    if (item.isCorrect) {
-      newAnswer = newLetter;
-    }
+    if (item.isCorrect) newAnswer = newLetter;
   });
 
   question.options = newOptions;
   question.answer = newAnswer;
   question.optionExplanations = newExplanations;
-
   return question;
 }
-
-/* ==================== BALANCING A/B/C/D ==================== */
 
 function balanceAnswerDistribution(questions) {
   const mcqQuestions = questions.filter(q => q.type === 'multiple_choice');
   if (mcqQuestions.length === 0) return;
-
-  const MAX_ATTEMPTS = 50; // batas aman
+  const MAX_ATTEMPTS = 50;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const counts = { A: 0, B: 0, C: 0, D: 0 };
     mcqQuestions.forEach(q => counts[q.answer]++);
     const avg = mcqQuestions.length / 4;
-    const threshold = Math.ceil(avg * 1.5); // huruf tidak boleh melebihi 1.5x rata-rata
-
+    const threshold = Math.ceil(avg * 1.5);
     const dominant = Object.keys(counts).find(letter => counts[letter] > threshold);
-    if (!dominant) break; // sudah cukup seimbang
-
-    // Cari satu soal dengan jawaban dominant, lalu shuffle ulang
+    if (!dominant) break;
     const idx = questions.findIndex(q => q.type === 'multiple_choice' && q.answer === dominant);
     if (idx === -1) break;
     shuffleOptions(questions[idx]);
@@ -185,15 +175,15 @@ function balanceAnswerDistribution(questions) {
 
 /* ==================== PROMPT BUILDER ==================== */
 
-function buildBatchPrompt(materi, instruksi, difficulty, totalCount, providerName, previousQuestions) {
-  const mcqTarget = Math.round(totalCount * 0.65);
-  const essayTarget = totalCount - mcqTarget;
-
+function buildBatchPrompt(materi, instruksi, difficulty, count, previousQuestions) {
   const prevList = previousQuestions.length
     ? `HINDARI DUPLIKASI:\nBerikut daftar pertanyaan yang sudah pernah dibuat (jangan ulangi atau buat yang mirip):\n${previousQuestions
         .map((q, i) => `${i + 1}. ${q}`)
         .join('\n')}`
     : '';
+
+  const mcqTarget = Math.round(count * 0.65);
+  const essayTarget = count - mcqTarget;
 
   return `Kamu adalah AI pembuat soal quiz untuk belajar.
 
@@ -209,7 +199,7 @@ ${difficulty}
 JUMLAH SOAL YANG HARUS DIBUAT:
 - Pilihan Ganda: ${mcqTarget} soal
 - Essay: ${essayTarget} soal
-Total: ${totalCount} soal.
+Total: ${count} soal.
 
 ${prevList}
 
@@ -247,22 +237,21 @@ FORMAT OUTPUT:
 }`;
 }
 
-/* ==================== GENERATE QUESTIONS FROM PROVIDER ==================== */
+/* ==================== GENERATE QUESTIONS DARI SATU PROVIDER ==================== */
 
-async function generateQuestionsFromProvider(provider, targetCount, materi, instruksi, difficulty, previousQuestions) {
-  const prompt = buildBatchPrompt(materi, instruksi, difficulty, targetCount, provider.name, previousQuestions);
+async function generateQuestionsFromProvider(provider, count, materi, instruksi, difficulty, previousQuestions) {
+  const prompt = buildBatchPrompt(materi, instruksi, difficulty, count, previousQuestions);
   const rawResult = await provider.call(prompt);
   const questions = normalizeAIResponse(rawResult, provider.name);
-  // Filter valid
-  let valid = questions.filter(q => validateQuestion(q));
-  // Jika lebih dari target, potong
-  if (valid.length > targetCount) {
-    // Shuffle lalu ambil targetCount
+  // Filter valid dan unik (terhadap previousQuestions)
+  const valid = questions.filter(q => validateQuestion(q) && !isDuplicate(q.question, previousQuestions));
+  // Jika lebih dari count, ambil acak sebanyak count
+  if (valid.length > count) {
     for (let i = valid.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [valid[i], valid[j]] = [valid[j], valid[i]];
     }
-    valid = valid.slice(0, targetCount);
+    return valid.slice(0, count);
   }
   return valid;
 }
@@ -295,119 +284,89 @@ module.exports = async (req, res) => {
 
   const materiClean = String(materi).slice(0, 5000);
   const instruksiClean = instruksi ? String(instruksi).slice(0, 5000) : '';
+  const previousQuestionsClean = Array.isArray(previousQuestions)
+    ? previousQuestions.map(q => String(q)).slice(0, 500)
+    : [];
 
-  let previousQuestionsClean = [];
-  if (Array.isArray(previousQuestions)) {
-    previousQuestionsClean = previousQuestions.map(q => String(q)).slice(0, 500);
-  }
-
-  const allQuestions = [];
-  const allQuestionTexts = []; // untuk anti-duplikasi internal
-  const workingProviders = [...AI_PROVIDERS];
-
+  // State untuk generation
+  let allQuestions = [];
+  let allQuestionTexts = [...previousQuestionsClean];
   let remaining = requestedCount;
-  let round = 0;
-  const MAX_ROUNDS = 20; // batas putaran untuk mencegah loop tak terbatas
+  let providerIndex = 0;
+  const unhealthyProviders = new Set();
 
-  while (remaining > 0 && workingProviders.length > 0 && round < MAX_ROUNDS) {
-    round++;
+  while (remaining > 0 && providerIndex < AI_PROVIDERS.length) {
+    const provider = AI_PROVIDERS[providerIndex];
 
-    // Distribusi soal ke provider yang masih aktif
-    const base = Math.floor(remaining / workingProviders.length);
-    let remainder = remaining % workingProviders.length;
-    const tasks = workingProviders.map((provider, index) => {
-      const count = base + (index < remainder ? 1 : 0);
-      return { provider, count };
-    });
-
-    // Jalankan semua provider secara paralel
-    const taskResults = await Promise.all(
-      tasks.map(async (task) => {
-        if (task.count === 0) return { provider: task.provider.name, questions: [], failed: false };
-        try {
-          const questions = await generateQuestionsFromProvider(
-            task.provider,
-            task.count,
-            materiClean,
-            instruksiClean,
-            difficulty,
-            previousQuestionsClean
-          );
-          return { provider: task.provider.name, questions, failed: false };
-        } catch (error) {
-          console.error(`Provider ${task.provider.name} failed:`, error.message);
-          return { provider: task.provider.name, questions: [], failed: true };
-        }
-      })
-    );
-
-    // Proses hasil
-    const failedProviders = [];
-    let roundSuccess = 0;
-
-    for (const result of taskResults) {
-      if (result.failed) {
-        failedProviders.push(result.provider);
-        continue;
-      }
-      const valid = result.questions.filter(q => validateQuestion(q));
-      const unique = [];
-      for (const q of valid) {
-        if (!isDuplicate(q.question, allQuestionTexts) && !isDuplicate(q.question, previousQuestionsClean)) {
-          unique.push(q);
-        }
-      }
-      // Jika lebih dari jatah, potong
-      const targetCountForProvider = tasks.find(t => t.provider.name === result.provider)?.count || 0;
-      let selected = unique;
-      if (selected.length > targetCountForProvider) {
-        // Fisher-Yates shuffle lalu slice
-        for (let i = selected.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [selected[i], selected[j]] = [selected[j], selected[i]];
-        }
-        selected = selected.slice(0, targetCountForProvider);
-      }
-
-      // Tambahkan ke allQuestions
-      for (const q of selected) {
-        q.id = allQuestions.length + 1;
-        allQuestions.push(q);
-        allQuestionTexts.push(q.question);
-        previousQuestionsClean.push(q.question);
-      }
-      roundSuccess += selected.length;
+    if (unhealthyProviders.has(provider.name)) {
+      providerIndex++;
+      continue;
     }
 
-    // Update remaining dan workingProviders
-    remaining = requestedCount - allQuestions.length;
-    // Hapus provider yang gagal dari daftar
-    for (const failedName of failedProviders) {
-      const idx = workingProviders.findIndex(p => p.name === failedName);
-      if (idx !== -1) workingProviders.splice(idx, 1);
+    const batchSize = Math.min(BATCH_SIZE, remaining);
+    let success = false;
+    let retries = 0;
+
+    while (retries <= MAX_RETRIES && !success) {
+      try {
+        const questions = await generateQuestionsFromProvider(
+          provider,
+          batchSize,
+          materiClean,
+          instruksiClean,
+          difficulty,
+          allQuestionTexts // untuk anti-duplikasi
+        );
+
+        if (questions.length > 0) {
+          // Tambahkan ke hasil
+          for (const q of questions) {
+            q.id = allQuestions.length + 1;
+            allQuestions.push(q);
+            allQuestionTexts.push(q.question);
+          }
+          remaining -= questions.length;
+          success = true;
+          // Jika provider menghasilkan kurang dari batchSize, kita lanjutkan dengan sisa
+          // Tapi tetap dianggap sukses, dan akan meminta sisa lagi nanti
+        } else {
+          throw new Error('Provider returned 0 valid questions');
+        }
+      } catch (error) {
+        console.error(`Provider ${provider.name} batch failed (attempt ${retries+1}):`, error.message);
+        retries++;
+        if (retries > MAX_RETRIES) {
+          unhealthyProviders.add(provider.name);
+          break;
+        }
+      }
     }
+
+    // Jika provider gagal setelah retry, kita pindah ke provider berikutnya
+    if (!success) {
+      unhealthyProviders.add(provider.name);
+      providerIndex++;
+    }
+    // Jika sukses, tetap di provider yang sama untuk batch berikutnya
+    // Loop akan berlanjut dengan provider yang sama (kecuali remaining sudah 0)
   }
 
+  // Jika setelah semua provider masih ada sisa, berarti gagal total
   if (allQuestions.length !== requestedCount) {
+    console.error(`Failed to generate all questions. Got ${allQuestions.length}, expected ${requestedCount}`);
     return res.status(500).json({ error: 'Gagal membuat quiz. Silakan coba lagi.' });
   }
 
-  // Post-processing
+  // Post-processing: shuffle options dan balance distribusi jawaban
   const finalQuestions = allQuestions.map(q => shuffleOptions(q));
-
-  // Balance A/B/C/D
   balanceAnswerDistribution(finalQuestions);
 
-  // Acak urutan soal (Fisher-Yates)
+  // Acak urutan soal
   for (let i = finalQuestions.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [finalQuestions[i], finalQuestions[j]] = [finalQuestions[j], finalQuestions[i]];
   }
-
-  // Reassign ID final
-  finalQuestions.forEach((q, idx) => {
-    q.id = idx + 1;
-  });
+  finalQuestions.forEach((q, idx) => (q.id = idx + 1));
 
   return res.status(200).json({ questions: finalQuestions });
 };
