@@ -9,6 +9,8 @@ const AI_PROVIDERS = [
   { name: 'deepseak', call: callDeepseak }
 ];
 
+const MAX_RETRIES = 1;
+
 async function callGemini(prompt) {
   const url = `https://api-faa.my.id/faa/gemini-ai?text=${encodeURIComponent(prompt)}`;
   return await fetchAI(url, 'Gemini');
@@ -92,25 +94,29 @@ Aturan:
 - Jangan menambahkan teks di luar JSON.
 - Jangan gunakan markdown code block.`;
 
-  // Coba semua provider secara acak, jika satu gagal lanjut ke berikutnya
-  const shuffled = [...AI_PROVIDERS].sort(() => Math.random() - 0.5);
-  for (const provider of shuffled) {
-    try {
-      const rawResult = await provider.call(prompt);
-      const parsed = normalizeAIResponse(rawResult, provider.name);
-      if (
-        typeof parsed.score !== 'number' ||
-        typeof parsed.isCorrect !== 'boolean' ||
-        typeof parsed.feedback !== 'string' ||
-        !Array.isArray(parsed.missingPoints) ||
-        typeof parsed.idealAnswer !== 'string'
-      ) {
-        throw new Error('Format evaluasi tidak valid');
+  // Coba provider secara berurutan, dengan retry terbatas
+  for (const provider of AI_PROVIDERS) {
+    let retries = 0;
+    while (retries <= MAX_RETRIES) {
+      try {
+        const rawResult = await provider.call(prompt);
+        const parsed = normalizeAIResponse(rawResult, provider.name);
+        if (
+          typeof parsed.score !== 'number' ||
+          typeof parsed.isCorrect !== 'boolean' ||
+          typeof parsed.feedback !== 'string' ||
+          !Array.isArray(parsed.missingPoints) ||
+          typeof parsed.idealAnswer !== 'string'
+        ) {
+          throw new Error('Format evaluasi tidak valid');
+        }
+        return res.status(200).json(parsed);
+      } catch (error) {
+        console.error(`Evaluasi dengan ${provider.name} attempt ${retries+1} gagal:`, error.message);
+        retries++;
       }
-      return res.status(200).json(parsed);
-    } catch (error) {
-      console.error(`Evaluasi dengan ${provider.name} gagal:`, error.message);
     }
+    // Jika retries habis, lanjut ke provider berikutnya
   }
 
   return res.status(500).json({ error: 'Gagal memeriksa jawaban. Silakan coba lagi.' });
