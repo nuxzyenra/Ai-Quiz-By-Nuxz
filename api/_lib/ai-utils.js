@@ -11,8 +11,8 @@ const AI_PROVIDERS = [
   { name: "Deepseak", url: "https://api-faa.my.id/faa/deep-ai?text=" },
 ];
 
-const REQUEST_TIMEOUT = 30000; // 30 detik
-const MAX_RETRIES = 2; // total percobaan per provider = 1 + 2 = 3
+const REQUEST_TIMEOUT = 12000; // 12 detik per provider agar tetap aman di Serverless Function
+const MAX_RETRIES = 0; // satu percobaan per provider, lalu langsung fallback ke provider berikutnya
 const BATCH_SIZE = 10; // jumlah soal per batch
 
 /**
@@ -34,7 +34,18 @@ async function callAIProvider(provider, prompt) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const data = await response.json();
+    const raw = await response.text();
+    if (!raw || !raw.trim()) {
+      throw new Error('Respons kosong');
+    }
+
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (_) {
+      data = raw;
+    }
+
     const text = extractAIText(data);
     if (!text) {
       throw new Error('Respons kosong atau format tidak dikenali');
