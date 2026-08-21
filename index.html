@@ -1,114 +1,98 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Quiziz By Nuxz</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="site-header">
-    <div class="container">
+  <div class="app">
+    <header class="header">
       <h1>AI Quiziz By Nuxz</h1>
-      <p>Buat quiz belajar dengan bantuan AI sesuai materi yang kamu inginkan.</p>
-    </div>
-  </header>
+      <p class="subtitle">Buat quiz belajar dengan bantuan AI sesuai materi yang kamu inginkan.</p>
+    </header>
 
-  <main class="container">
-    <!-- HOME VIEW -->
-    <section id="home-view" class="view">
-      <div class="card">
-        <h2>Pengaturan Quiz</h2>
-        <div class="form-group">
-          <label for="materi">Materi / Topik</label>
-          <textarea id="materi" rows="4" placeholder="Contoh: Sistem pengereman mobil"></textarea>
-        </div>
-        <div class="form-group">
-          <label for="instruksi">Instruksi Tambahan</label>
-          <textarea id="instruksi" rows="3" placeholder="Contoh: Fokus pada fungsi komponen dan ciri-ciri kerusakannya."></textarea>
-        </div>
-        <div class="form-row">
+    <main>
+      <!-- Form Container -->
+      <section id="form-container" class="container active">
+        <form id="quiz-form" class="card">
           <div class="form-group">
-            <label for="jumlah">Jumlah Soal</label>
-            <input type="number" id="jumlah" min="1" value="10" placeholder="Contoh: 20" />
+            <label for="topic">Materi / Topik <span class="required">*</span></label>
+            <textarea id="topic" rows="3" placeholder="Contoh: Dasar-dasar sistem rem kendaraan" required></textarea>
           </div>
           <div class="form-group">
-            <label for="difficulty">Tingkat Kesulitan</label>
-            <select id="difficulty">
-              <option value="Mudah">Mudah</option>
-              <option value="Sedang" selected>Sedang</option>
-              <option value="Sulit">Sulit</option>
-            </select>
+            <label for="instruction">Instruksi Tambahan</label>
+            <textarea id="instruction" rows="3" placeholder="Contoh: Fokus pada fungsi komponen dan ciri-ciri kerusakannya."></textarea>
           </div>
-        </div>
-        <button id="btn-mulai" class="btn-primary">Mulai Quiz</button>
-        <div id="error-banner" class="error-banner hidden"></div>
-      </div>
-
-      <div class="card">
-        <h2>Riwayat Quiz</h2>
-        <div id="history-list" class="history-list">
-          <p class="empty-text">Belum ada riwayat.</p>
-        </div>
-        <button id="btn-hapus-riwayat" class="btn-secondary">Hapus Riwayat</button>
-      </div>
-    </section>
-
-    <!-- LOADING VIEW -->
-    <section id="loading-view" class="view hidden">
-      <div class="loading-card">
-        <div class="spinner"></div>
-        <h2>AI Quiziz By Nuxz</h2>
-        <p>AI sedang membuat soal...<br />Mohon tunggu.</p>
-      </div>
-    </section>
-
-    <!-- QUIZ VIEW -->
-    <section id="quiz-view" class="view hidden">
-      <div class="card quiz-card">
-        <div class="quiz-header">
-          <div class="quiz-info">
-            <span id="quiz-materi"></span>
-            <span id="quiz-difficulty" class="badge"></span>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="count">Jumlah Soal</label>
+              <input type="number" id="count" min="1" value="10" required>
+            </div>
+            <div class="form-group">
+              <label for="difficulty">Tingkat Kesulitan</label>
+              <select id="difficulty">
+                <option value="Mudah">Mudah</option>
+                <option value="Sedang" selected>Sedang</option>
+                <option value="Sulit">Sulit</option>
+                <option value="Sangat Sulit">Sangat Sulit</option>
+              </select>
+            </div>
           </div>
+          <button type="submit" id="start-btn" class="btn btn-primary btn-block">Mulai Quiz</button>
+        </form>
+      </section>
+
+      <!-- Loading Container -->
+      <section id="loading-container" class="container">
+        <div class="loading-card card">
+          <div class="spinner"></div>
+          <h2 id="loading-title">Mempersiapkan quiz...</h2>
+          <p id="loading-status">AI sedang menyusun soal...</p>
           <div class="progress-bar">
             <div id="progress-fill" class="progress-fill"></div>
           </div>
-          <p id="question-number" class="question-number"></p>
         </div>
-        <div id="question-container"></div>
-        <div id="feedback-container"></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- RESULT VIEW -->
-    <section id="result-view" class="view hidden">
-      <div class="card result-card">
-        <h2>Quiz Selesai</h2>
-        <div class="score-circle">
-          <span id="score-value">0</span>
-          <span>/ 100</span>
+      <!-- Quiz Container -->
+      <section id="quiz-container" class="container">
+        <div class="quiz-header">
+          <span id="question-progress" class="badge">Soal 1 dari 10</span>
+          <span id="question-type" class="badge badge-secondary">Pilihan Ganda</span>
+          <span id="question-difficulty" class="badge badge-info">Sedang</span>
         </div>
-        <p id="score-message" class="score-message"></p>
-        <div class="score-detail">
-          <span>Benar: <strong id="correct-count">0</strong></span>
-          <span>Salah: <strong id="wrong-count">0</strong></span>
+        <div class="progress-bar">
+          <div id="quiz-progress-fill" class="progress-fill"></div>
         </div>
-        <div class="result-actions">
-          <button id="btn-retry" class="btn-primary">Coba Soal Baru</button>
-          <button id="btn-back-settings" class="btn-secondary">Kembali ke Pengaturan</button>
+        <div id="question-card" class="card question-card">
+          <!-- Pertanyaan akan dirender di sini -->
         </div>
-      </div>
+        <div id="answer-feedback" class="feedback-area"></div>
+        <button id="next-btn" class="btn btn-primary btn-block" style="display:none;">Soal Berikutnya</button>
+      </section>
 
-      <div id="pembahasan-container" class="pembahasan-container"></div>
-    </section>
-  </main>
+      <!-- Result Container -->
+      <section id="result-container" class="container">
+        <div class="result-card card">
+          <h2>Hasil Quiz</h2>
+          <div id="final-score" class="score-display">0</div>
+          <div id="result-summary" class="result-summary"></div>
+          <button id="review-btn" class="btn btn-secondary btn-block">Lihat Review</button>
+          <button id="new-quiz-btn" class="btn btn-primary btn-block">Quiz Baru</button>
+        </div>
+      </section>
 
-  <footer class="site-footer">
-    <div class="container">
-      <p>AI Quiziz By Nuxz</p>
-    </div>
-  </footer>
+      <!-- Review Container -->
+      <section id="review-container" class="container">
+        <h2>Review Jawaban</h2>
+        <div id="review-list" class="review-list"></div>
+        <button id="back-to-result-btn" class="btn btn-secondary btn-block">Kembali ke Hasil</button>
+        <button id="new-quiz-btn-2" class="btn btn-primary btn-block">Quiz Baru</button>
+      </section>
+    </main>
+  </div>
 
   <script src="script.js"></script>
 </body>
